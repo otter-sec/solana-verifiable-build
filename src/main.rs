@@ -364,9 +364,14 @@ pub fn get_program_hash(url: Option<String>, program_id: Pubkey) -> anyhow::Resu
     let program_buffer =
         Pubkey::find_program_address(&[program_id.as_ref()], &bpf_loader_upgradeable::id()).0;
     let offset = UpgradeableLoaderState::size_of_programdata_metadata();
-    let account_data = client.get_account_data(&program_buffer)?[offset..].to_vec();
-    let program_hash = get_binary_hash(account_data);
-    Ok(program_hash)
+
+    match client.get_account_data(&program_buffer) {
+        Ok(account_data) => {
+            let program_hash = get_binary_hash(account_data[offset..].to_vec());
+            Ok(program_hash)
+        }
+        Err(_) => Err(anyhow!("Failed to get program hash from mainnet")),
+    }
 }
 
 pub fn get_genesis_hash(url: Option<String>) -> anyhow::Result<String> {

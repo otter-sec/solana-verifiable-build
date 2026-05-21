@@ -35,18 +35,33 @@ fn is_account_not_found_error(err: &anyhow::Error) -> bool {
 pub fn account_exists_or_err(connection: &RpcClient, address: &Address) -> anyhow::Result<bool> {
     match connection.get_account(address) {
         Ok(_) => Ok(true),
-        Err(err) => {
-            let err_anyhow = anyhow!(err);
-            if is_account_not_found_error(&err_anyhow) {
-                Ok(false)
-            } else {
-                Err(anyhow!(
-                    "RPC error while checking account {} existence: {}",
-                    address,
-                    err_anyhow
-                ))
-            }
-        }
+        Err(err) => account_missing_from_get_account_error(address, err),
+    }
+}
+
+pub fn account_initialized_or_err(
+    connection: &RpcClient,
+    address: &Address,
+) -> anyhow::Result<bool> {
+    match connection.get_account(address) {
+        Ok(account) => Ok(!account.data.is_empty()),
+        Err(err) => account_missing_from_get_account_error(address, err),
+    }
+}
+
+fn account_missing_from_get_account_error(
+    address: &Address,
+    err: impl std::error::Error + Send + Sync + 'static,
+) -> anyhow::Result<bool> {
+    let err_anyhow = anyhow!(err);
+    if is_account_not_found_error(&err_anyhow) {
+        Ok(false)
+    } else {
+        Err(anyhow!(
+            "RPC error while checking account {} existence: {}",
+            address,
+            err_anyhow
+        ))
     }
 }
 
@@ -539,12 +554,12 @@ mod account_exists_tests {
     const TEST_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 
     #[test]
+    #[ignore = "requires network; run: cargo test account_exists_or_err_test -- --ignored"]
     fn account_exists_or_err_test() {
         let client = RpcClient::new("https://api.mainnet-beta.solana.com");
         let program_id = Address::from_str(TEST_PROGRAM_ID).unwrap();
 
         let exists = account_exists_or_err(&client, &program_id).unwrap();
-        println!("exists: {exists}");
-        assert!(exists, "SPL Token program account should exist on mainnet");
+        assert!(exists, "Test program account should exist on mainnet");
     }
 }

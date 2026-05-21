@@ -39,7 +39,7 @@ use image_config::IMAGE_MAP;
 mod test;
 
 use crate::solana_program::{
-    account_exists_or_err, compose_transaction, find_build_params_pda, get_all_pdas_available,
+    account_initialized_or_err, compose_transaction, find_build_params_pda, get_all_pdas_available,
     get_program_pda, process_close, resolve_rpc_url, upload_program_verification_data,
     validate_config_and_keypair, InputParams, OtterBuildParams, OtterVerifyInstructions,
 };
@@ -1831,9 +1831,8 @@ async fn export_pda_tx(
 
     let (pda, _) = find_build_params_pda(&program_id, &uploader);
 
-    // check if account already exists
-    // initialize only when account is missing
-    let instruction = match account_exists_or_err(connection, &pda)? {
+    // initialize only when account is missing or exists with empty data
+    let instruction = match account_initialized_or_err(connection, &pda)? {
         true => {
             println!("PDA already exists, creating update transaction");
             OtterVerifyInstructions::Update

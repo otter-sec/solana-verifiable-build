@@ -27,6 +27,29 @@ const OTTER_VERIFY_PROGRAM_ID: Address =
 const OTTER_SIGNER: Address =
     Address::from_str_const("9VWiUUhgNoRwTH5NVehYJEDwcotwYX3VgW4MChiHPAqU");
 
+fn is_account_not_found_error(err: &anyhow::Error) -> bool {
+    let err_text = err.to_string();
+    err_text.contains("AccountNotFound") || err_text.contains("Account does not exist")
+}
+
+pub fn account_exists_or_err(connection: &RpcClient, address: &Address) -> anyhow::Result<bool> {
+    match connection.get_account(address) {
+        Ok(_) => Ok(true),
+        Err(err) => {
+            let err_anyhow = anyhow!(err);
+            if is_account_not_found_error(&err_anyhow) {
+                Ok(false)
+            } else {
+                Err(anyhow!(
+                    "RPC error while checking account {} existence: {}",
+                    address,
+                    err_anyhow
+                ))
+            }
+        }
+    }
+}
+
 #[derive(BorshDeserialize, BorshSerialize, Debug)]
 pub struct OtterBuildParams {
     pub address: Address,
@@ -322,7 +345,7 @@ pub async fn upload_program_verification_data(
         // Possible PDA-2: signer is otter signer
         let pda_account_2 = find_build_params_pda(&program_address, &OTTER_SIGNER).0;
 
-        if connection.get_account(&pda_account_1).is_ok() {
+        if account_exists_or_err(connection, &pda_account_1)? {
             println!("Program already uploaded by the current signer. Updating the program.");
             process_otter_verify_ixs(
                 &input_params,
@@ -334,7 +357,7 @@ pub async fn upload_program_verification_data(
                 compute_unit_price,
                 config_path.clone(),
             )?;
-        } else if connection.get_account(&pda_account_2).is_ok() {
+        } else if account_exists_or_err(connection, &pda_account_2)? {
             let wanna_create_new_pda = skip_prompt || prompt_user_input(
                 "Program already uploaded by another signer. Do you want to upload a new program? (Y/n)"
             );
@@ -398,7 +421,7 @@ pub async fn process_close(
 
     let pda_account = find_build_params_pda(&program_address, &signer_address).0;
 
-    if connection.get_account(&pda_account).is_ok() {
+    if account_exists_or_err(connection, &pda_account)? {
         process_otter_verify_ixs(
             &InputParams {
                 version: "".to_string(),
@@ -506,4 +529,22 @@ pub async fn get_all_pdas_available(
     }
 
     Ok(pdas)
+}
+
+#[cfg(test)]
+mod account_exists_tests {
+    use super::*;
+    use std::str::FromStr;
+
+    const TEST_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+
+    #[test]
+    fn account_exists_or_err_test() {
+        let client = RpcClient::new("https://api.mainnet-beta.solana.com");
+        let program_id = Address::from_str(TEST_PROGRAM_ID).unwrap();
+
+        let exists = account_exists_or_err(&client, &program_id).unwrap();
+        println!("exists: {exists}");
+        assert!(exists, "SPL Token program account should exist on mainnet");
+    }
 }

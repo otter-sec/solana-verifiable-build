@@ -39,9 +39,9 @@ use image_config::IMAGE_MAP;
 mod test;
 
 use crate::solana_program::{
-    compose_transaction, find_build_params_pda, get_all_pdas_available, get_program_pda,
-    process_close, resolve_rpc_url, upload_program_verification_data, validate_config_and_keypair,
-    InputParams, OtterBuildParams, OtterVerifyInstructions,
+    account_exists_or_err, compose_transaction, find_build_params_pda, get_all_pdas_available,
+    get_program_pda, process_close, resolve_rpc_url, upload_program_verification_data,
+    validate_config_and_keypair, InputParams, OtterBuildParams, OtterVerifyInstructions,
 };
 
 const MAINNET_GENESIS_HASH: &str = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
@@ -1832,17 +1832,16 @@ async fn export_pda_tx(
     let (pda, _) = find_build_params_pda(&program_id, &uploader);
 
     // check if account already exists
-    let instruction = match connection.get_account(&pda) {
-        Ok(account_info) => {
-            if !account_info.data.is_empty() {
-                println!("PDA already exists, creating update transaction");
-                OtterVerifyInstructions::Update
-            } else {
-                println!("PDA does not exist, creating initialize transaction");
-                OtterVerifyInstructions::Initialize
-            }
+    // initialize only when account is missing
+    let instruction = match account_exists_or_err(connection, &pda)? {
+        true => {
+            println!("PDA already exists, creating update transaction");
+            OtterVerifyInstructions::Update
         }
-        Err(_) => OtterVerifyInstructions::Initialize,
+        false => {
+            println!("PDA does not exist, creating initialize transaction");
+            OtterVerifyInstructions::Initialize
+        }
     };
 
     let tx = compose_transaction(

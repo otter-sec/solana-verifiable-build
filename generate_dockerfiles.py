@@ -29,6 +29,19 @@ RUST_VERSION_PLACEHOLDER = "$RUST_VERSION"
 SOLANA_VERSION_PLACEHOLDER = "$SOLANA_VERSION"
 AGAVE_VERSION_PLACEHOLDER = "$AGAVE_VERSION"
 INSTALL_SHA256_PLACEHOLDER = "$INSTALL_SHA256"
+CARGO_BUILD_SBF_VERSION_PLACEHOLDER = "$CARGO_BUILD_SBF_VERSION"
+PLATFORM_TOOLS_ARGS_PLACEHOLDER = "$PLATFORM_TOOLS_ARGS"
+
+# Agave release trains that install cargo-build-sbf from crates.io
+# Add a new entry when a minor line should use the cargo-install template
+AGAVE_CARGO_INSTALL_MAP = {
+    (4, 1): {
+        "cargo_build_sbf_version": "4.1.0",
+        "platform_tools_args": " --tools-version v1.54",
+    },
+}
+
+missing_cargo_install_trains = set()
 
 _INSTALL_SHA256_CACHE = {}
 
@@ -89,17 +102,33 @@ WORKDIR /build
 CMD /bin/bash
 """
 
-# Dockerfile template for Agave
+# Dockerfile template for Agave (CLI install)
 base_dockerfile_agave = f"""
 FROM --platform=linux/amd64 rust@{RUST_VERSION_PLACEHOLDER}
 
 RUN apt-get update && apt-get install -qy git gnutls-bin curl ca-certificates
 {with_pinned_installer(f"https://release.anza.xyz/{AGAVE_VERSION_PLACEHOLDER}/install")}
 ENV PATH="/root/.local/share/solana/install/active_release/bin:$PATH"
-# Call cargo build-sbf to trigger installation of associated platform tools
+# Call cargo build-sbf to trigger installation of platform tools
 RUN cargo init temp --edition 2021 && \\
     cd temp && \\
     cargo build-sbf && \\
+    rm -rf temp
+WORKDIR /build
+
+CMD /bin/bash
+"""
+
+# Dockerfile template for Agave (cargo install path)
+base_dockerfile_agave_cargo_install = f"""
+FROM --platform=linux/amd64 rust@{RUST_VERSION_PLACEHOLDER}
+
+RUN apt-get update && apt-get install -qy git gnutls-bin curl ca-certificates
+RUN cargo install cargo-build-sbf --version {CARGO_BUILD_SBF_VERSION_PLACEHOLDER} --locked
+# Call cargo build-sbf to trigger installation of platform tools
+RUN cargo init temp --edition 2021 && \\
+    cd temp && \\
+    cargo build-sbf{PLATFORM_TOOLS_ARGS_PLACEHOLDER} && \\
     rm -rf temp
 WORKDIR /build
 
@@ -158,12 +187,27 @@ def get_release_info(version_tag):
         }
     #Everything after we need to get from anza 
     elif (major == 1 and minor == 18 and patch >= 24) or major >= 2:
-        return {
-            "base_dockerfile_text": base_dockerfile_agave,
+        agave_info = {
             "version_placeholder": AGAVE_VERSION_PLACEHOLDER,
             "url": f"https://raw.githubusercontent.com/anza-xyz/agave/{version_tag}/rust-toolchain.toml",
-            "install_url": f"https://release.anza.xyz/{version_tag}/install"
+            "install_url": f"https://release.anza.xyz/{version_tag}/install",
         }
+        train = (major, minor)
+        if train in AGAVE_CARGO_INSTALL_MAP:
+            cfg = AGAVE_CARGO_INSTALL_MAP[train]
+            agave_info["base_dockerfile_text"] = base_dockerfile_agave_cargo_install
+            agave_info["cargo_build_sbf_version"] = cfg["cargo_build_sbf_version"]
+            agave_info["platform_tools_args"] = cfg.get("platform_tools_args", "")
+        elif train >= (4, 1):
+            missing_cargo_install_trains.add(train)
+            print(
+                f"ERROR: {version_tag} needs an AGAVE_CARGO_INSTALL_MAP entry for Agave {major}.{minor}.x",
+                flush=True,
+            )
+            return None
+        else:
+            agave_info["base_dockerfile_text"] = base_dockerfile_agave
+        return agave_info
 
     return None
 
@@ -273,20 +317,31 @@ def process_releases(releases):
             RUST_VERSION_PLACEHOLDER, RUST_DOCKER_IMAGESHA_MAP[rust_version]
         ).lstrip("\n")
 
+        if "cargo_build_sbf_version" in release_info:
+            dockerfile = dockerfile.replace(
+                CARGO_BUILD_SBF_VERSION_PLACEHOLDER,
+                release_info["cargo_build_sbf_version"],
+            ).replace(
+                PLATFORM_TOOLS_ARGS_PLACEHOLDER,
+                release_info.get("platform_tools_args", ""),
+            )
+
         if os.path.exists(path):
             if not args.update_existing:
                 # Only generate Dockerfiles for new releases
                 continue
 
-        sha = fetch_install_script_sha256(release_info["install_url"])
-        if not sha:
-            print(f"Warning: failed to fetch installer checksum for {release}; leaving {path} unchanged")
-            continue
-
-        dockerfile = dockerfile.replace(INSTALL_SHA256_PLACEHOLDER, sha)
-
+        # Only templates with the install script need a checksum
         if INSTALL_SHA256_PLACEHOLDER in dockerfile:
-            raise Exception(f"Checksum not injected for {release}")
+            sha = fetch_install_script_sha256(release_info["install_url"])
+            if not sha:
+                print(f"Warning: failed to fetch installer checksum for {release}; leaving {path} unchanged")
+                continue
+
+            dockerfile = dockerfile.replace(INSTALL_SHA256_PLACEHOLDER, sha)
+
+            if INSTALL_SHA256_PLACEHOLDER in dockerfile:
+                raise Exception(f"Checksum not injected for {release}")
 
         stripped = release.strip("v")
         if os.path.exists(path):
@@ -314,6 +369,12 @@ else:
     agave_releases = get_agave_releases()
     process_releases(solana_releases)
     process_releases(agave_releases)
+
+if missing_cargo_install_trains:
+    trains = ", ".join(f"{m}.{n}.x" for m, n in sorted(missing_cargo_install_trains))
+    raise Exception(
+        f"Missing AGAVE_CARGO_INSTALL_MAP entries for Agave release trains: {trains}"
+    )
 
 print(RUST_DOCKER_IMAGESHA_MAP)
 

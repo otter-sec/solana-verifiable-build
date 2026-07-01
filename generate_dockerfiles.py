@@ -32,12 +32,12 @@ INSTALL_SHA256_PLACEHOLDER = "$INSTALL_SHA256"
 CARGO_BUILD_SBF_VERSION_PLACEHOLDER = "$CARGO_BUILD_SBF_VERSION"
 PLATFORM_TOOLS_ARGS_PLACEHOLDER = "$PLATFORM_TOOLS_ARGS"
 
-# Agave release trains that install cargo-build-sbf from crates.io
-# Add a new entry when a minor line should use the cargo-install template
+# Agave trains that install cargo-build-sbf from crates.io (not the full CLI).
+# One map entry per minor line, bump cargo_build_sbf_version when the train moves to a new crate.
 AGAVE_CARGO_INSTALL_MAP = {
     (4, 1): {
         "cargo_build_sbf_version": "4.1.0",
-        "platform_tools_args": " --tools-version v1.54",
+        "platform_tools_args": "--tools-version v1.54",
     },
 }
 
@@ -123,6 +123,7 @@ CMD /bin/bash
 base_dockerfile_agave_cargo_install = f"""
 FROM --platform=linux/amd64 rust@{RUST_VERSION_PLACEHOLDER}
 
+LABEL agave.version="{AGAVE_VERSION_PLACEHOLDER}"
 RUN apt-get update && apt-get install -qy git gnutls-bin curl ca-certificates
 RUN cargo install cargo-build-sbf --version {CARGO_BUILD_SBF_VERSION_PLACEHOLDER} --locked
 # Call cargo build-sbf to trigger installation of platform tools
@@ -318,12 +319,15 @@ def process_releases(releases):
         ).lstrip("\n")
 
         if "cargo_build_sbf_version" in release_info:
+            platform_tools_args = release_info.get("platform_tools_args", "").strip()
+            if platform_tools_args:
+                platform_tools_args = f" {platform_tools_args}"
             dockerfile = dockerfile.replace(
                 CARGO_BUILD_SBF_VERSION_PLACEHOLDER,
                 release_info["cargo_build_sbf_version"],
             ).replace(
                 PLATFORM_TOOLS_ARGS_PLACEHOLDER,
-                release_info.get("platform_tools_args", ""),
+                platform_tools_args,
             )
 
         if os.path.exists(path):

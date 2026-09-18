@@ -40,6 +40,14 @@ AGAVE_CARGO_INSTALL_MAP = {
         "cargo_build_sbf_version": "4.1.0",
         "platform_tools_args": "--tools-version v1.54",
     },
+    (4, 2): {
+        "cargo_build_sbf_version": "4.2.0",
+        "platform_tools_args": "--tools-version v1.56",
+    },
+    (4, 3): {
+        "cargo_build_sbf_version": "4.3.0",
+        "platform_tools_args": "--tools-version v1.57",
+    },
 }
 
 missing_cargo_install_trains = set()

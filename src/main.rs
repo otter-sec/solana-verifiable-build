@@ -1058,6 +1058,8 @@ pub fn build(
                 "exec",
                 "-e",
                 &format!("RUSTUP_TOOLCHAIN={active_toolchain}"),
+                "-w",
+                &build_path,
                 &container_id,
             ])
             .args([
@@ -1067,6 +1069,7 @@ pub fn build(
                 "fetch",
                 "--locked",
             ])
+            .args(&manifest_path_filter)
             .stderr(Stdio::inherit())
             .stdout(Stdio::inherit())
             .output()?;

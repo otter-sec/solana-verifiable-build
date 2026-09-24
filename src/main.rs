@@ -1045,8 +1045,10 @@ pub fn build(
     println!("Using container Rust toolchain: {active_toolchain}");
 
     // Solana v1.17 uses Rust 1.73, which defaults to the sparse registry, making
-    // this fetch unnecessary, but requires us to omit the "frozen" argument
-    let locked_args = if major == 1 && minor < 17 {
+    // this fetch unnecessary, but requires us to omit the "frozen" argument.
+    // Unknown versions (0.0.0) use the legacy path so custom/old images are not
+    // broken by sparse-registry --config flags.
+    let locked_args = if (major == 1 && minor < 17) || (major == 0 && minor == 0 && patch == 0) {
         // First, we resolve the dependencies and cache them in the Docker container
         // ARM processors running Linux have a bug where the build fails if the dependencies are not preloaded.
         // Running the build without the pre-fetch will cause the container to run out of memory.
@@ -1683,12 +1685,6 @@ fn resolve_solana_version_from_base_image(base_image: &str) -> Option<(u32, u32,
         }
     }
 
-    // Custom image tags are not Solana CLI versions; only parse :x.y.z on the
-    // official verifiable-build images.
-    if !base_image.contains("solanafoundation/solana-verifiable-build") {
-        return None;
-    }
-
     let without_digest = base_image
         .split_once("@sha256:")
         .map(|(image, _)| image)
@@ -1699,7 +1695,10 @@ fn resolve_solana_version_from_base_image(base_image: &str) -> Option<(u32, u32,
         let major = parts[0].parse::<u32>().ok()?;
         let minor = parts[1].parse::<u32>().ok()?;
         let patch = parts[2].parse::<u32>().ok()?;
-        return Some((major, minor, patch));
+        // Only trust tags that match a known Solana/Agave image version.
+        if IMAGE_MAP.contains_key(&(major, minor, patch)) {
+            return Some((major, minor, patch));
+        }
     }
     None
 }

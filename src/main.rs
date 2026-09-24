@@ -4,7 +4,6 @@ use api::{
 };
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bincode::serialize;
-use cargo_lock::Lockfile;
 use cargo_toml::{Manifest, Value};
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use signal_hook::{
@@ -951,26 +950,27 @@ pub fn build(
     let image: String = match base_image {
         Some(base_image) => base_image,
         None => {
-            // Resolve Solana version: [workspace.metadata.cli] first, then Cargo.lock fallback
-            (major, minor, patch) = get_solana_version_from_workspace_metadata(&mount_path)
-                .or_else(|| get_solana_version_from_lockfile(&lockfile).ok())
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Failed to determine Solana version: not found in [workspace.metadata.cli] in Cargo.toml nor in Cargo.lock"
-                    )
-                })?;
             if bpf_flag {
                 // Use this for backwards compatibility with anchor verified builds
+                (major, minor, patch) = (1, 13, 5);
                 solana_version = Some("v1.13.5".to_string());
                 "projectserum/build@sha256:75b75eab447ebcca1f471c98583d9b5d82c4be122c470852a022afcf9c98bead".to_string()
-            } else if let Some(digest) = IMAGE_MAP.get(&(major, minor, patch)) {
-                println!("Found docker image for Solana version {major}.{minor}.{patch}");
-                solana_version = Some(format!("v{major}.{minor}.{patch}"));
-                format!("solanafoundation/solana-verifiable-build@{digest}")
             } else {
-                return Err(anyhow!(
-                    "No compatible Docker image found for Solana version {major}.{minor}.{patch} \nPlease use --base-image flag to specify a compatible Docker image manually"
-                ));
+                (major, minor, patch) = get_solana_version_from_workspace_metadata(&workspace_path)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Failed to determine Solana version: set [workspace.metadata.cli] solana = \"x.y.z\" in Cargo.toml, or pass --base-image"
+                        )
+                    })?;
+                if let Some(digest) = IMAGE_MAP.get(&(major, minor, patch)) {
+                    println!("Found docker image for Solana version {major}.{minor}.{patch}");
+                    solana_version = Some(format!("v{major}.{minor}.{patch}"));
+                    format!("solanafoundation/solana-verifiable-build@{digest}")
+                } else {
+                    return Err(anyhow!(
+                        "No compatible Docker image found for Solana version {major}.{minor}.{patch} \nPlease use --base-image flag to specify a compatible Docker image manually"
+                    ));
+                }
             }
         }
     };
@@ -1666,43 +1666,6 @@ pub fn get_solana_version_from_workspace_metadata(workspace_root: &str) -> Optio
         }
     }
     None
-}
-
-/// Tries solana-program, then solana-program-error, then solana-account-info in Cargo.lock
-pub fn get_solana_version_from_lockfile(lockfile: &str) -> anyhow::Result<(u32, u32, u32)> {
-    get_pkg_version_from_cargo_lock("solana-program", lockfile)
-        .or_else(|_| get_pkg_version_from_cargo_lock("solana-program-error", lockfile))
-        .or_else(|_| get_pkg_version_from_cargo_lock("solana-account-info", lockfile))
-        .map_err(|_| {
-            anyhow!(
-                "Failed to determine Solana version from Cargo.lock (tried solana-program, solana-program-error, solana-account-info)"
-            )
-        })
-}
-
-pub fn get_pkg_version_from_cargo_lock(
-    package_name: &str,
-    cargo_lock_file: &str,
-) -> anyhow::Result<(u32, u32, u32)> {
-    let lockfile = Lockfile::load(cargo_lock_file)?;
-    let res = lockfile
-        .packages
-        .iter()
-        .filter(|pkg| pkg.name.to_string() == *package_name)
-        .filter_map(|pkg| {
-            let version = pkg.version.clone().to_string();
-            let version_parts: Vec<&str> = version.split(".").collect();
-            if version_parts.len() == 3 {
-                let major = version_parts[0].parse::<u32>().unwrap_or(0);
-                let minor = version_parts[1].parse::<u32>().unwrap_or(0);
-                let patch = version_parts[2].parse::<u32>().unwrap_or(0);
-                return Some((major, minor, patch));
-            }
-            None
-        })
-        .next()
-        .ok_or_else(|| anyhow!("Failed to parse {} version from Cargo.lock", package_name))?;
-    Ok(res)
 }
 
 pub fn get_lib_name_from_cargo_toml(cargo_toml_file: &str) -> anyhow::Result<String> {

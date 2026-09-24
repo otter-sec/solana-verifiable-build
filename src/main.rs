@@ -1046,9 +1046,7 @@ pub fn build(
 
     // Solana v1.17 uses Rust 1.73, which defaults to the sparse registry, making
     // this fetch unnecessary, but requires us to omit the "frozen" argument.
-    // Unknown versions (0.0.0) use the legacy path so custom/old images are not
-    // broken by sparse-registry --config flags.
-    let locked_args = if (major == 1 && minor < 17) || (major == 0 && minor == 0 && patch == 0) {
+    let locked_args = if major == 1 && minor < 17 {
         // First, we resolve the dependencies and cache them in the Docker container
         // ARM processors running Linux have a bug where the build fails if the dependencies are not preloaded.
         // Running the build without the pre-fetch will cause the container to run out of memory.
@@ -1079,6 +1077,9 @@ pub fn build(
         println!("Finished fetching build dependencies");
 
         ["--frozen", "--locked"].as_slice()
+    } else if major == 0 && minor == 0 && patch == 0 {
+        // Unknown custom image version: neither sparse nor --frozen.
+        ["--locked"].as_slice()
     } else {
         // To be totally safe, force the build to use the sparse registry
         [

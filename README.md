@@ -27,7 +27,7 @@ For production use, prefer installing from a tagged release.
 solana-verify build
 ```
 
-Add the Solana/Agave version in your root `Cargo.toml` so the tool can pick the right build image (required unless you pass `--base-image`):
+Add the Solana/Agave version in your root `Cargo.toml` so the tool can pick the right build image (required unless you pass `--base-image` or use the legacy `--bpf` image):
 
 ```toml
 [workspace.metadata.cli]

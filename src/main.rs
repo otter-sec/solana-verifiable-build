@@ -948,7 +948,15 @@ pub fn build(
     let mut solana_version: Option<String> = None;
     let (mut major, mut minor, mut patch) = (0, 0, 0);
     let image: String = match base_image {
-        Some(base_image) => base_image,
+        Some(base_image) => {
+            // Resolve version from known digests/tags so cargo flag compatibility
+            // (e.g. sparse registry) still matches the selected image.
+            if let Some(version) = resolve_solana_version_from_base_image(&base_image) {
+                (major, minor, patch) = version;
+                solana_version = Some(format!("v{major}.{minor}.{patch}"));
+            }
+            base_image
+        }
         None => {
             if bpf_flag {
                 // Use this for backwards compatibility with anchor verified builds
@@ -1664,6 +1672,28 @@ pub fn get_solana_version_from_workspace_metadata(workspace_root: &str) -> Optio
             let patch = parts[2].parse::<u32>().ok()?;
             return Some((major, minor, patch));
         }
+    }
+    None
+}
+
+fn resolve_solana_version_from_base_image(base_image: &str) -> Option<(u32, u32, u32)> {
+    for ((major, minor, patch), digest) in IMAGE_MAP.iter() {
+        if base_image.contains(digest) {
+            return Some((*major, *minor, *patch));
+        }
+    }
+
+    let without_digest = base_image
+        .split_once("@sha256:")
+        .map(|(image, _)| image)
+        .unwrap_or(base_image);
+    let tag = without_digest.rsplit(':').next()?.trim_start_matches('v');
+    let parts: Vec<&str> = tag.split('.').collect();
+    if parts.len() == 3 {
+        let major = parts[0].parse::<u32>().ok()?;
+        let minor = parts[1].parse::<u32>().ok()?;
+        let patch = parts[2].parse::<u32>().ok()?;
+        return Some((major, minor, patch));
     }
     None
 }

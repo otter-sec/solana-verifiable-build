@@ -1683,6 +1683,12 @@ fn resolve_solana_version_from_base_image(base_image: &str) -> Option<(u32, u32,
         }
     }
 
+    // Custom image tags are not Solana CLI versions; only parse :x.y.z on the
+    // official verifiable-build images.
+    if !base_image.contains("solanafoundation/solana-verifiable-build") {
+        return None;
+    }
+
     let without_digest = base_image
         .split_once("@sha256:")
         .map(|(image, _)| image)

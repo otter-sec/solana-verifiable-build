@@ -968,28 +968,27 @@ pub fn build(
                 let lockfile_root_package = library_name.as_deref().and_then(|lib| {
                     let (manifest_rel, _) =
                         find_relative_manifest_path_and_build_path(&mount_path, lib).ok()?;
-                    let manifest_abs = PathBuf::from(&mount_path)
-                        .join(manifest_rel.trim_start_matches('/'));
+                    let manifest_abs =
+                        PathBuf::from(&mount_path).join(manifest_rel.trim_start_matches('/'));
                     get_pkg_name_from_cargo_toml(manifest_abs.to_str()?)
                 });
-                (major, minor, patch) =
-                    if let Some(version) =
-                        get_solana_version_from_workspace_metadata(&workspace_path)
-                    {
-                        version
-                    } else {
-                        match get_legacy_solana_version_from_lockfile(
-                            &lockfile,
-                            lockfile_root_package.as_deref(),
-                        )? {
-                            Some(version) => version,
-                            None => {
-                                return Err(anyhow!(
+                (major, minor, patch) = if let Some(version) =
+                    get_solana_version_from_workspace_metadata(&workspace_path)
+                {
+                    version
+                } else {
+                    match get_legacy_solana_version_from_lockfile(
+                        &lockfile,
+                        lockfile_root_package.as_deref(),
+                    )? {
+                        Some(version) => version,
+                        None => {
+                            return Err(anyhow!(
                                     "Failed to determine Solana version: set [workspace.metadata.cli] solana = \"x.y.z\" in Cargo.toml, or pass --base-image"
                                 ));
-                            }
                         }
-                    };
+                    }
+                };
                 if let Some(digest) = IMAGE_MAP.get(&(major, minor, patch)) {
                     println!("Found docker image for Solana version {major}.{minor}.{patch}");
                     solana_version = Some(format!("v{major}.{minor}.{patch}"));

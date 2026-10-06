@@ -1751,11 +1751,19 @@ fn parse_semver_triple(version: &str) -> Option<(u32, u32, u32)> {
     ))
 }
 
+fn fmt_versions(versions: &[(u32, u32, u32)]) -> String {
+    versions
+        .iter()
+        .map(|(maj, min, pat)| format!("{maj}.{min}.{pat}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn find_pkg_version_in_dependency_tree(
     lockfile: &Lockfile,
     root_package: &str,
     package_name: &str,
-) -> Option<(u32, u32, u32)> {
+) -> anyhow::Result<Option<(u32, u32, u32)>> {
     use std::collections::{HashSet, VecDeque};
 
     let roots: Vec<_> = lockfile
@@ -1764,7 +1772,7 @@ fn find_pkg_version_in_dependency_tree(
         .filter(|pkg| pkg.name.to_string() == root_package)
         .collect();
     if roots.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     let mut queue = VecDeque::new();
@@ -1799,8 +1807,12 @@ fn find_pkg_version_in_dependency_tree(
     found.sort_unstable();
     found.dedup();
     match found.as_slice() {
-        [version] => Some(*version),
-        _ => None,
+        [] => Ok(None),
+        [version] => Ok(Some(*version)),
+        _ => Err(anyhow!(
+            "Ambiguous {package_name} versions in {root_package}'s dependency tree ({}); set [workspace.metadata.cli] solana = \"x.y.z\" or pass --base-image",
+            fmt_versions(&found)
+        )),
     }
 }
 
@@ -1814,11 +1826,7 @@ pub fn get_pkg_version_from_cargo_lock(
     // When a program package is known, only trust its dependency tree, do not
     // fall back to a lockfile-wide search that may pick another crate's version.
     if let Some(root_package) = root_package {
-        return Ok(find_pkg_version_in_dependency_tree(
-            &lockfile,
-            root_package,
-            package_name,
-        ));
+        return find_pkg_version_in_dependency_tree(&lockfile, root_package, package_name);
     }
 
     let mut versions: Vec<(u32, u32, u32)> = lockfile
@@ -1836,11 +1844,7 @@ pub fn get_pkg_version_from_cargo_lock(
         _ => Err(anyhow!(
             "Ambiguous {} versions in Cargo.lock ({}); set [workspace.metadata.cli] solana = \"x.y.z\" or pass --library-name / --base-image",
             package_name,
-            versions
-                .iter()
-                .map(|(maj, min, pat)| format!("{maj}.{min}.{pat}"))
-                .collect::<Vec<_>>()
-                .join(", ")
+            fmt_versions(&versions)
         )),
     }
 }

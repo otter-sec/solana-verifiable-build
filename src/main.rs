@@ -1713,47 +1713,30 @@ fn get_legacy_solana_version_from_lockfile(
     lockfile: &str,
     root_package: Option<&str>,
 ) -> anyhow::Result<Option<(u32, u32, u32)>> {
-    let (major, minor, patch) = match get_solana_version_from_lockfile(lockfile, root_package) {
-        Ok(version) => version,
-        Err(err) => {
-            let msg = err.to_string();
-            if msg.contains("Ambiguous") {
-                return Err(err);
-            }
-            return Ok(None);
-        }
-    };
-    if major != 1 {
-        return Ok(None);
-    }
-    if !IMAGE_MAP.contains_key(&(major, minor, patch)) {
-        return Ok(None);
-    }
-    Ok(Some((major, minor, patch)))
+    // Image availability is checked by the caller so a 1.x version without an
+    // image still reports "No compatible Docker image found for 1.x.y".
+    Ok(get_solana_version_from_lockfile(lockfile, root_package)?
+        .filter(|(major, _, _)| *major == 1))
 }
 
-/// Tries solana-program, then solana-program-error, then solana-account-info in Cargo.lock
+/// Tries solana-program, then solana-program-error, then solana-account-info in Cargo.lock.
+/// Returns `Ok(None)` when none are present; errors on ambiguous versions or an unreadable lockfile.
 pub fn get_solana_version_from_lockfile(
     lockfile: &str,
     root_package: Option<&str>,
-) -> anyhow::Result<(u32, u32, u32)> {
-    let mut last_not_found = None;
+) -> anyhow::Result<Option<(u32, u32, u32)>> {
     for package_name in [
         "solana-program",
         "solana-program-error",
         "solana-account-info",
     ] {
-        match get_pkg_version_from_cargo_lock(package_name, lockfile, root_package) {
-            Ok(version) => return Ok(version),
-            Err(err) if err.to_string().contains("Ambiguous") => return Err(err),
-            Err(err) => last_not_found = Some(err),
+        if let Some(version) =
+            get_pkg_version_from_cargo_lock(package_name, lockfile, root_package)?
+        {
+            return Ok(Some(version));
         }
     }
-    Err(last_not_found.unwrap_or_else(|| {
-        anyhow!(
-            "Failed to determine Solana version from Cargo.lock (tried solana-program, solana-program-error, solana-account-info)"
-        )
-    }))
+    Ok(None)
 }
 
 fn parse_semver_triple(version: &str) -> Option<(u32, u32, u32)> {
@@ -1825,15 +1808,17 @@ pub fn get_pkg_version_from_cargo_lock(
     package_name: &str,
     cargo_lock_file: &str,
     root_package: Option<&str>,
-) -> anyhow::Result<(u32, u32, u32)> {
+) -> anyhow::Result<Option<(u32, u32, u32)>> {
     let lockfile = Lockfile::load(cargo_lock_file)?;
 
+    // When a program package is known, only trust its dependency tree, do not
+    // fall back to a lockfile-wide search that may pick another crate's version.
     if let Some(root_package) = root_package {
-        if let Some(version) =
-            find_pkg_version_in_dependency_tree(&lockfile, root_package, package_name)
-        {
-            return Ok(version);
-        }
+        return Ok(find_pkg_version_in_dependency_tree(
+            &lockfile,
+            root_package,
+            package_name,
+        ));
     }
 
     let mut versions: Vec<(u32, u32, u32)> = lockfile
@@ -1846,11 +1831,8 @@ pub fn get_pkg_version_from_cargo_lock(
     versions.dedup();
 
     match versions.as_slice() {
-        [version] => Ok(*version),
-        [] => Err(anyhow!(
-            "Failed to parse {} version from Cargo.lock",
-            package_name
-        )),
+        [version] => Ok(Some(*version)),
+        [] => Ok(None),
         _ => Err(anyhow!(
             "Ambiguous {} versions in Cargo.lock ({}); set [workspace.metadata.cli] solana = \"x.y.z\" or pass --library-name / --base-image",
             package_name,

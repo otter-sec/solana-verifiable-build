@@ -199,6 +199,17 @@ mod tests {
     }
 
     #[test]
+    fn test_local_anchor_example() -> anyhow::Result<()> {
+        const EXPECTED_HASH: &str =
+            "ec383d8f2c815a4855521f442af9470a2ab5a8e0fa61a36bd1463aa5a7e93134";
+        test_local_build_hash_helper(
+            "./examples/hello_world_anchor",
+            "./examples/hello_world_anchor/target/deploy/hello_world.so",
+            EXPECTED_HASH,
+        )
+    }
+
+    #[test]
     fn test_local_pinocchio_example_with_cargo_build_sbf_args() -> anyhow::Result<()> {
         // This test ensures that the --cargo-build-sbf-args flag is correctly passed to
         // the build command and it does affect the resulting hash.

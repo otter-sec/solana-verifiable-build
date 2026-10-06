@@ -4,6 +4,7 @@ use api::{
 };
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bincode::serialize;
+use cargo_lock::Lockfile;
 use cargo_toml::{Manifest, Value};
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use signal_hook::{
@@ -964,19 +965,41 @@ pub fn build(
                 solana_version = Some("v1.13.5".to_string());
                 "projectserum/build@sha256:75b75eab447ebcca1f471c98583d9b5d82c4be122c470852a022afcf9c98bead".to_string()
             } else {
-                (major, minor, patch) = get_solana_version_from_workspace_metadata(&workspace_path)
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "Failed to determine Solana version: set [workspace.metadata.cli] solana = \"x.y.z\" in Cargo.toml, or pass --base-image"
-                        )
-                    })?;
+                let lockfile_root_package = library_name.as_deref().and_then(|lib| {
+                    let (manifest_rel, _) =
+                        find_relative_manifest_path_and_build_path(&mount_path, lib).ok()?;
+                    let manifest_abs = PathBuf::from(&mount_path)
+                        .join(manifest_rel.trim_start_matches('/'));
+                    get_pkg_name_from_cargo_toml(manifest_abs.to_str()?)
+                });
+                (major, minor, patch) =
+                    if let Some(version) =
+                        get_solana_version_from_workspace_metadata(&workspace_path)
+                    {
+                        version
+                    } else {
+                        match get_legacy_solana_version_from_lockfile(
+                            &lockfile,
+                            lockfile_root_package.as_deref(),
+                        )? {
+                            Some(version) => version,
+                            None => {
+                                return Err(anyhow!(
+                                    "Failed to determine Solana version: set [workspace.metadata.cli] solana = \"x.y.z\" in Cargo.toml, or pass --base-image"
+                                ));
+                            }
+                        }
+                    };
                 if let Some(digest) = IMAGE_MAP.get(&(major, minor, patch)) {
                     println!("Found docker image for Solana version {major}.{minor}.{patch}");
                     solana_version = Some(format!("v{major}.{minor}.{patch}"));
                     format!("solanafoundation/solana-verifiable-build@{digest}")
                 } else {
                     return Err(anyhow!(
-                        "No compatible Docker image found for Solana version {major}.{minor}.{patch} \nPlease use --base-image flag to specify a compatible Docker image manually"
+                        "No compatible Docker image found for Solana version {major}.{minor}.{patch}\n\
+                         Please use --base-image to specify one manually, or open an issue at \
+                         https://github.com/solana-foundation/solana-verifiable-build/issues \
+                         if this is an official Solana/Agave release we have not published yet."
                     ));
                 }
             }
@@ -1682,6 +1705,163 @@ pub fn get_solana_version_from_workspace_metadata(workspace_root: &str) -> Optio
         }
     }
     None
+}
+
+/// Soft migration for older programs: only trust Cargo.lock when the inferred
+/// version is ≤4.3 and we ship an image for it. Newer `solana-*` crate versions
+/// no longer match Solana/Agave CLI versions.
+fn get_legacy_solana_version_from_lockfile(
+    lockfile: &str,
+    root_package: Option<&str>,
+) -> anyhow::Result<Option<(u32, u32, u32)>> {
+    let (major, minor, patch) = match get_solana_version_from_lockfile(lockfile, root_package) {
+        Ok(version) => version,
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("Ambiguous") {
+                return Err(err);
+            }
+            return Ok(None);
+        }
+    };
+    if major > 4 || (major == 4 && minor > 3) {
+        return Ok(None);
+    }
+    if !IMAGE_MAP.contains_key(&(major, minor, patch)) {
+        return Ok(None);
+    }
+    Ok(Some((major, minor, patch)))
+}
+
+/// Tries solana-program, then solana-program-error, then solana-account-info in Cargo.lock
+pub fn get_solana_version_from_lockfile(
+    lockfile: &str,
+    root_package: Option<&str>,
+) -> anyhow::Result<(u32, u32, u32)> {
+    let mut last_not_found = None;
+    for package_name in [
+        "solana-program",
+        "solana-program-error",
+        "solana-account-info",
+    ] {
+        match get_pkg_version_from_cargo_lock(package_name, lockfile, root_package) {
+            Ok(version) => return Ok(version),
+            Err(err) if err.to_string().contains("Ambiguous") => return Err(err),
+            Err(err) => last_not_found = Some(err),
+        }
+    }
+    Err(last_not_found.unwrap_or_else(|| {
+        anyhow!(
+            "Failed to determine Solana version from Cargo.lock (tried solana-program, solana-program-error, solana-account-info)"
+        )
+    }))
+}
+
+fn parse_semver_triple(version: &str) -> Option<(u32, u32, u32)> {
+    let version_parts: Vec<&str> = version.split('.').collect();
+    if version_parts.len() != 3 {
+        return None;
+    }
+    Some((
+        version_parts[0].parse().ok()?,
+        version_parts[1].parse().ok()?,
+        version_parts[2].parse().ok()?,
+    ))
+}
+
+fn find_pkg_version_in_dependency_tree(
+    lockfile: &Lockfile,
+    root_package: &str,
+    package_name: &str,
+) -> Option<(u32, u32, u32)> {
+    use std::collections::{HashSet, VecDeque};
+
+    let roots: Vec<_> = lockfile
+        .packages
+        .iter()
+        .filter(|pkg| pkg.name.to_string() == root_package)
+        .collect();
+    if roots.is_empty() {
+        return None;
+    }
+
+    let mut queue = VecDeque::new();
+    let mut visited = HashSet::new();
+    for root in &roots {
+        queue.push_back((root.name.to_string(), root.version.to_string()));
+    }
+
+    let mut found = Vec::new();
+    while let Some((name, version)) = queue.pop_front() {
+        if !visited.insert((name.clone(), version.clone())) {
+            continue;
+        }
+        let Some(pkg) = lockfile
+            .packages
+            .iter()
+            .find(|pkg| pkg.name.to_string() == name && pkg.version.to_string() == version)
+        else {
+            continue;
+        };
+        if name == package_name {
+            if let Some(triple) = parse_semver_triple(&version) {
+                found.push(triple);
+            }
+            continue;
+        }
+        for dep in &pkg.dependencies {
+            queue.push_back((dep.name.to_string(), dep.version.to_string()));
+        }
+    }
+
+    found.sort_unstable();
+    found.dedup();
+    match found.as_slice() {
+        [version] => Some(*version),
+        _ => None,
+    }
+}
+
+pub fn get_pkg_version_from_cargo_lock(
+    package_name: &str,
+    cargo_lock_file: &str,
+    root_package: Option<&str>,
+) -> anyhow::Result<(u32, u32, u32)> {
+    let lockfile = Lockfile::load(cargo_lock_file)?;
+
+    if let Some(root_package) = root_package {
+        if let Some(version) =
+            find_pkg_version_in_dependency_tree(&lockfile, root_package, package_name)
+        {
+            return Ok(version);
+        }
+    }
+
+    let mut versions: Vec<(u32, u32, u32)> = lockfile
+        .packages
+        .iter()
+        .filter(|pkg| pkg.name.to_string() == *package_name)
+        .filter_map(|pkg| parse_semver_triple(&pkg.version.to_string()))
+        .collect();
+    versions.sort_unstable();
+    versions.dedup();
+
+    match versions.as_slice() {
+        [version] => Ok(*version),
+        [] => Err(anyhow!(
+            "Failed to parse {} version from Cargo.lock",
+            package_name
+        )),
+        _ => Err(anyhow!(
+            "Ambiguous {} versions in Cargo.lock ({}); set [workspace.metadata.cli] solana = \"x.y.z\" or pass --library-name / --base-image",
+            package_name,
+            versions
+                .iter()
+                .map(|(maj, min, pat)| format!("{maj}.{min}.{pat}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
 }
 
 fn resolve_solana_version_from_base_image(base_image: &str) -> Option<(u32, u32, u32)> {

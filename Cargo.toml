@@ -1,6 +1,6 @@
 [package]
 name = "solana-verify"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 description = "A CLI tool for building verifiable Solana programs"
 license = "MIT"
@@ -22,6 +22,7 @@ base64 = "0.22.1"
 bincode = "1.3.3"
 borsh = { version = "1.2.1", features = ["derive"] }
 bs58 = "0.5.1"
+cargo-lock = "11.0.1" # missing in workspace
 cargo_toml = "0.22" # missing in workspace
 clap = "2.33.1" # version of v1.18 does not support derive
 crossbeam-channel = "0.5.11"

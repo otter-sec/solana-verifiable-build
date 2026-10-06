@@ -27,7 +27,7 @@ For production use, prefer installing from a tagged release.
 solana-verify build
 ```
 
-Add the Solana/Agave version in your root `Cargo.toml` so the tool can pick the right build image (required unless you pass `--base-image` or use the legacy `--bpf` image):
+Add the Solana/Agave version in your root `Cargo.toml` so the tool can pick the right build image (required for versions after 4.3, unless you pass `--base-image` or use the legacy `--bpf` image). Older programs may still resolve via `Cargo.lock` when the inferred version is ≤4.3 and we ship an image for it:
 
 ```toml
 [workspace.metadata.cli]
@@ -48,6 +48,12 @@ solana-verify remote submit-job --program-id $PROGRAM_ID --uploader $THE_PUBKEY_
 ```
 
 > The legacy `--remote` flag on `verify-from-repo` has been deprecated. Upload your PDA with programs upgrade authority, then run the `remote submit-job` command to queue OtterSec's worker. For a full walkthrough of the PDA workflow, see the [Solana verified builds guide](https://solana.com/docs/programs/verified-builds).
+
+## Examples
+
+- `examples/hello_world` — native `solana-program`
+- `examples/hello_world_pinocchio` — Pinocchio
+- `examples/hello_world_anchor` — Anchor
 
 ## Documentation
 

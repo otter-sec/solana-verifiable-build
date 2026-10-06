@@ -27,7 +27,7 @@ For production use, prefer installing from a tagged release.
 solana-verify build
 ```
 
-Add the Solana/Agave version in your root `Cargo.toml` so the tool can pick the right build image (required for versions after 4.3, unless you pass `--base-image` or use the legacy `--bpf` image). Older programs may still resolve via `Cargo.lock` when the inferred version is ≤4.3 and we ship an image for it:
+Add the Solana/Agave version in your root `Cargo.toml` so the tool can pick the right build image (required unless you pass `--base-image` or use the legacy `--bpf` image). Older Solana 1.x programs may still resolve via `Cargo.lock` when `solana-program` matches a shipped image:
 
 ```toml
 [workspace.metadata.cli]

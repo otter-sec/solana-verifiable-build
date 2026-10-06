@@ -1706,9 +1706,9 @@ pub fn get_solana_version_from_workspace_metadata(workspace_root: &str) -> Optio
     None
 }
 
-/// Soft migration for older programs: only trust Cargo.lock when the inferred
-/// version is ≤4.3 and we ship an image for it. Newer `solana-*` crate versions
-/// no longer match Solana/Agave CLI versions.
+/// Soft migration for older programs: only trust Cargo.lock for Solana 1.x,
+/// when `solana-program` versions still matched the CLI. Later crate lines
+/// (e.g. solana-program 2.x with Agave CLI 4.x) must not select a build image.
 fn get_legacy_solana_version_from_lockfile(
     lockfile: &str,
     root_package: Option<&str>,
@@ -1723,7 +1723,7 @@ fn get_legacy_solana_version_from_lockfile(
             return Ok(None);
         }
     };
-    if major > 4 || (major == 4 && minor > 3) {
+    if major != 1 {
         return Ok(None);
     }
     if !IMAGE_MAP.contains_key(&(major, minor, patch)) {

@@ -965,18 +965,30 @@ pub fn build(
                 solana_version = Some("v1.13.5".to_string());
                 "projectserum/build@sha256:75b75eab447ebcca1f471c98583d9b5d82c4be122c470852a022afcf9c98bead".to_string()
             } else {
-                let lockfile_root_package = library_name.as_deref().and_then(|lib| {
-                    let (manifest_rel, _) =
-                        find_relative_manifest_path_and_build_path(&mount_path, lib).ok()?;
-                    let manifest_abs =
-                        PathBuf::from(&mount_path).join(manifest_rel.trim_start_matches('/'));
-                    get_pkg_name_from_cargo_toml(manifest_abs.to_str()?)
-                });
                 (major, minor, patch) = if let Some(version) =
                     get_solana_version_from_workspace_metadata(&workspace_path)
                 {
                     version
                 } else {
+                    let lockfile_root_package = match library_name.as_deref() {
+                        None => None,
+                        Some(lib) => {
+                            let (manifest_rel, _) =
+                                find_relative_manifest_path_and_build_path(&mount_path, lib)?;
+                            let manifest_abs = PathBuf::from(&mount_path)
+                                .join(manifest_rel.trim_start_matches('/'));
+                            let Some(pkg_name) =
+                                get_pkg_name_from_cargo_toml(manifest_abs.to_str().ok_or_else(
+                                    || anyhow!("Invalid manifest path for library-name {lib}"),
+                                )?)
+                            else {
+                                return Err(anyhow!(
+                                    "Failed to resolve package name for --library-name {lib}; check the flag or set [workspace.metadata.cli] solana = \"x.y.z\""
+                                ));
+                            };
+                            Some(pkg_name)
+                        }
+                    };
                     match get_legacy_solana_version_from_lockfile(
                         &lockfile,
                         lockfile_root_package.as_deref(),
@@ -1826,6 +1838,15 @@ pub fn get_pkg_version_from_cargo_lock(
     // When a program package is known, only trust its dependency tree, do not
     // fall back to a lockfile-wide search that may pick another crate's version.
     if let Some(root_package) = root_package {
+        if !lockfile
+            .packages
+            .iter()
+            .any(|pkg| pkg.name.to_string() == root_package)
+        {
+            return Err(anyhow!(
+                "Package {root_package} not found in {cargo_lock_file}; check --library-name or set [workspace.metadata.cli] solana = \"x.y.z\""
+            ));
+        }
         return find_pkg_version_in_dependency_tree(&lockfile, root_package, package_name);
     }
 
